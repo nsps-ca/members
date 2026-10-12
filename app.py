@@ -36,7 +36,9 @@ def login_required(f):
         if session.get("user") is None:
             return redirect("/?m=unauth")
         return f(*args, **kwargs)
+
     return decorated_function
+
 
 @app.get("/")
 def index():
@@ -96,10 +98,13 @@ def callback():
     }
     return redirect(url_for("listing"))
 
+
 @app.get("/files")
 @login_required
 def listing():
-    if not GOOGLE_SERVICE_ACCOUNT_FILE or not os.path.isfile(GOOGLE_SERVICE_ACCOUNT_FILE):
+    if not GOOGLE_SERVICE_ACCOUNT_FILE or not os.path.isfile(
+        GOOGLE_SERVICE_ACCOUNT_FILE
+    ):
         return "GOOGLE_SERVICE_ACCOUNT_FILE is not set or does not exist", 500
 
     credentials = service_account.Credentials.from_service_account_file(
