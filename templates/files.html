@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>North Shore Photographic Society: Files</title>
+  <link rel="icon" href="https://www.nsps.ca/wp-content/uploads/2016/08/logo-1-150x150.jpg" sizes="32x32">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-body-tertiary">
+  <main class="container">
+      <div class="container-lg mb-3 pb-3 border-bottom">
+        <img src="https://www.nsps.ca/wp-content/uploads/2017/07/cropped-NSPS_logo_banner_750x150px.png" style="height: 8em">
+        <p class="mt-3">Welcome to the NSPS file server. <a href="https://nsps.ca">Return to the main site</a> 👈</p>
+    </div> 
+
+    <div class="container-lg">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Type</th>
+              <th scope="col">Modified</th>
+              <th scope="col" class="text-end">Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for file in files %}
+              <tr>
+                <td>
+                  {% if file.webViewLink %}
+                    <a href="{{ file.webViewLink }}" target="_blank" rel="noopener">{{ file.name }}</a>
+                  {% else %}
+                    {{ file.name }}
+                  {% endif %}
+                </td>
+                <td class="text-secondary small">{{ file.mimeType }}</td>
+                <td class="text-secondary small">{{ file.modifiedTime }}</td>
+                <td class="text-end text-secondary small">
+                  {% if file.size %}{{ (file.size | int / 1024) | round(1) }} KB{% else %}&mdash;{% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="text-center text-secondary py-4">No files found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
