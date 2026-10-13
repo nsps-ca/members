@@ -29,11 +29,7 @@
             {% for file in files %}
               <tr>
                 <td>
-                  {% if file.webViewLink %}
-                    <a href="{{ file.webViewLink }}" target="_blank" rel="noopener">{{ file.name }}</a>
-                  {% else %}
-                    {{ file.name }}
-                  {% endif %}
+                  <a href="{{ url_for('download', file_id=file.id) }}">{{ file.name }}</a>
                 </td>
                 <td class="text-secondary small">{{ file.mimeType }}</td>
                 <td class="text-secondary small">{{ file.modifiedTime }}</td>

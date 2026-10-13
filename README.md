@@ -47,6 +47,7 @@ python app.py
 ```
 
 Open <http://localhost:8000> and click **Sign in with Slack**, then **Browse Drive files**.
+Clicking a file name downloads it through the app.
 
 > `SLACK_REDIRECT_URI` must exactly match the redirect URL registered in the Slack app.
 > Note that `app.py`'s `__main__` block sets `SESSION_COOKIE_SECURE=True`, which drops the
@@ -55,6 +56,20 @@ Open <http://localhost:8000> and click **Sign in with Slack**, then **Browse Dri
 
 ## Files
 
-- [app.py](app.py) — routes: `/`, `/login`, `/callback`, `/files`, `/logout`
+- [app.py](app.py) — routes: `/`, `/login`, `/callback`, `/files`, `/files/<id>/download`, `/logout`
 - [templates/index.html](templates/index.html) — Bootstrap login/profile card
 - [templates/files.html](templates/files.html) — Bootstrap table of Drive files
+
+## Downloading
+
+`GET /files/<id>/download` is login-gated and streams the file back with
+`Content-Disposition: attachment`:
+
+- Regular files are fetched with `files.get_media`.
+- Google Workspace files (Docs/Sheets/Slides/Drawings) are exported to PDF, XLSX or PNG,
+  since they have no bytes of their own.
+- When `GOOGLE_DRIVE_FOLDER_ID` is set, files outside that folder are refused with a 403,
+  so a logged-in user can only reach what the listing shows.
+
+Note that each download is buffered in memory, which is fine for a small file server but
+not for multi-gigabyte files.

@@ -1,9 +1,19 @@
+import io
 import os
 import secrets
 from urllib.parse import urlencode
 from functools import wraps
 import requests
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    abort,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 
 AUTHORIZE_URL = "https://slack.com/openid/connect/authorize"
 TOKEN_URL = "https://slack.com/api/openid.connect.token"
@@ -17,6 +27,17 @@ from googleapiclient.errors import HttpError
 load_dotenv()
 
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+# Google Workspace files have no bytes of their own, so they must be exported.
+DOWNLOAD_EXPORTS = {
+    "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.spreadsheet": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsx",
+    ),
+    "application/vnd.google-apps.presentation": ("application/pdf", ".pdf"),
+    "application/vnd.google-apps.drawing": ("image/png", ".png"),
+}
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
@@ -38,6 +59,16 @@ def login_required(f):
         return f(*args, **kwargs)
 
     return decorated_function
+
+
+def drive_service():
+    if not GOOGLE_SERVICE_ACCOUNT_FILE or not os.path.isfile(GOOGLE_SERVICE_ACCOUNT_FILE):
+        abort(500, "GOOGLE_SERVICE_ACCOUNT_FILE is not set or does not exist")
+
+    credentials = service_account.Credentials.from_service_account_file(
+        GOOGLE_SERVICE_ACCOUNT_FILE, scopes=DRIVE_SCOPES
+    )
+    return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
 @app.get("/")
@@ -102,15 +133,7 @@ def callback():
 @app.get("/files")
 @login_required
 def listing():
-    if not GOOGLE_SERVICE_ACCOUNT_FILE or not os.path.isfile(
-        GOOGLE_SERVICE_ACCOUNT_FILE
-    ):
-        return "GOOGLE_SERVICE_ACCOUNT_FILE is not set or does not exist", 500
-
-    credentials = service_account.Credentials.from_service_account_file(
-        GOOGLE_SERVICE_ACCOUNT_FILE, scopes=DRIVE_SCOPES
-    )
-    drive = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    drive = drive_service()
 
     query = "trashed = false"
     if GOOGLE_DRIVE_FOLDER_ID:
@@ -126,7 +149,7 @@ def listing():
                     pageSize=100,
                     pageToken=page_token,
                     orderBy="modifiedTime desc",
-                    fields="nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
+                    fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
                     supportsAllDrives=True,
                     includeItemsFromAllDrives=True,
                 )
@@ -140,6 +163,44 @@ def listing():
         return f"Google Drive error: {e}", 502
 
     return render_template("files.html", user=session.get("user"), files=files)
+
+
+@app.get("/files/<file_id>/download")
+@login_required
+def download(file_id):
+    drive = drive_service()
+
+    try:
+        meta = (
+            drive.files()
+            .get(
+                fileId=file_id,
+                fields="id, name, mimeType, parents",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+    except HttpError as e:
+        return f"Google Drive error: {e}", 404 if e.resp.status == 404 else 502
+
+    # Never serve anything outside the folder we list.
+    if GOOGLE_DRIVE_FOLDER_ID and GOOGLE_DRIVE_FOLDER_ID not in meta.get("parents", []):
+        return "File is not in the configured folder", 403
+
+    name, mime = meta["name"], meta["mimeType"]
+    try:
+        if mime.startswith("application/vnd.google-apps."):
+            export_mime, extension = DOWNLOAD_EXPORTS.get(mime, (None, None))
+            if not export_mime:
+                return f"Files of type {mime} cannot be downloaded", 400
+            data = drive.files().export_media(fileId=file_id, mimeType=export_mime).execute()
+            mime, name = export_mime, name + extension
+        else:
+            data = drive.files().get_media(fileId=file_id, supportsAllDrives=True).execute()
+    except HttpError as e:
+        return f"Google Drive error: {e}", 502
+
+    return send_file(io.BytesIO(data), mimetype=mime, as_attachment=True, download_name=name)
 
 
 @app.get("/logout")
