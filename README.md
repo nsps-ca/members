@@ -71,5 +71,11 @@ Clicking a file name downloads it through the app.
 - When `GOOGLE_DRIVE_FOLDER_ID` is set, files outside that folder are refused with a 403,
   so a logged-in user can only reach what the listing shows.
 
-Note that each download is buffered in memory, which is fine for a small file server but
-not for multi-gigabyte files.
+Downloads are streamed in 4 MB chunks (`CHUNK_SIZE`) rather than buffered, so memory use
+stays flat and multi-GB files work. `MediaIoBaseDownload` fetches each chunk with a Range
+request and retries transient failures up to three times, and the chunk is handed to the
+client before the next one is requested, which gives natural backpressure.
+
+`Content-Length` is sent for regular files (so browsers show progress and can detect a
+short read). A crash part-way through the body can only be logged and truncated, since the
+headers are already on the wire.

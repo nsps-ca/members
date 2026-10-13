@@ -1,16 +1,17 @@
 import io
 import os
 import secrets
-from urllib.parse import urlencode
+from itertools import chain
+from urllib.parse import quote, urlencode
 from functools import wraps
 import requests
 from flask import (
     Flask,
+    Response,
     abort,
     redirect,
     render_template,
     request,
-    send_file,
     session,
     url_for,
 )
@@ -23,10 +24,13 @@ from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
 
 load_dotenv()
 
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+CHUNK_SIZE = 4 * 1024 * 1024
 
 # Google Workspace files have no bytes of their own, so they must be exported.
 DOWNLOAD_EXPORTS = {
@@ -69,6 +73,29 @@ def drive_service():
         GOOGLE_SERVICE_ACCOUNT_FILE, scopes=DRIVE_SCOPES
     )
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+
+def drive_chunks(media_request, chunksize=CHUNK_SIZE, num_retries=3):
+    """Yield a Drive download chunk by chunk, so multi-GB files never sit in memory.
+
+    MediaIoBaseDownload fetches each chunk with a Range request, then hands us one
+    write per chunk; we drain that buffer before asking for the next one, which also
+    gives the client backpressure.
+    """
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, media_request, chunksize=chunksize)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk(num_retries=num_retries)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate()
+
+
+def attachment_header(name):
+    # quote() percent-encodes CR/LF, so a hostile filename can't forge headers.
+    fallback = "".join(c for c in name if c.isascii() and c.isprintable() and c not in '"\\')
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
 @app.get("/")
@@ -188,19 +215,36 @@ def download(file_id):
         return "File is not in the configured folder", 403
 
     name, mime = meta["name"], meta["mimeType"]
+    if mime.startswith("application/vnd.google-apps."):
+        export_mime, extension = DOWNLOAD_EXPORTS.get(mime, (None, None))
+        if not export_mime:
+            return f"Files of type {mime} cannot be downloaded", 400
+        media_request = drive.files().export_media(fileId=file_id, mimeType=export_mime)
+        mime, name, size = export_mime, name + extension, None
+    else:
+        media_request = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
+        size = meta.get("size")
+
+    chunks = drive_chunks(media_request)
     try:
-        if mime.startswith("application/vnd.google-apps."):
-            export_mime, extension = DOWNLOAD_EXPORTS.get(mime, (None, None))
-            if not export_mime:
-                return f"Files of type {mime} cannot be downloaded", 400
-            data = drive.files().export_media(fileId=file_id, mimeType=export_mime).execute()
-            mime, name = export_mime, name + extension
-        else:
-            data = drive.files().get_media(fileId=file_id, supportsAllDrives=True).execute()
+        # Pull the first chunk now so Drive errors still produce a clean status code
+        # instead of a truncated body part-way through the response.
+        first = next(chunks, b"")
     except HttpError as e:
         return f"Google Drive error: {e}", 502
 
-    return send_file(io.BytesIO(data), mimetype=mime, as_attachment=True, download_name=name)
+    def remainder():
+        try:
+            yield from chunks
+        except HttpError as e:
+            # The response has already started, so all we can do is log it and end the
+            # body; Content-Length then tells the client the file is incomplete.
+            app.logger.warning("Download of %s broke off: %s", file_id, e)
+
+    headers = {"Content-Disposition": attachment_header(name)}
+    if size:
+        headers["Content-Length"] = size
+    return Response(chain([first], remainder()), mimetype=mime, headers=headers)
 
 
 @app.get("/logout")
