@@ -105,6 +105,12 @@ from the current folder, stopping at `GOOGLE_DRIVE_FOLDER_ID` when it is set). T
 parameter is rejected with a 404 unless it looks like a Drive id and resolves to a folder,
 so a file id or a deleted folder can't be used to list something unexpected.
 
+Rows are sorted folders first, then by name, matching the Drive web UI. The API's `orderBy`
+offers no "folders first" key — `folder` sorts by the parent folder *id*, which is identical
+for every row here — so `listing` requests `orderBy=name_natural` for a stable pagination
+order and then sorts in memory with `natural_key`, which keeps numbers in names in numeric
+order (`IMG_9` before `IMG_10`) instead of `name`'s `1, 12, 2, 22`.
+
 ## Downloading
 
 `GET /files/<id>/download` is login-gated and streams the file back with

@@ -145,6 +145,11 @@ def folder_chain(drive, folder_id):
     return chain
 
 
+def natural_key(name):
+    """Sort key that orders numbers inside names numerically, so IMG_9 precedes IMG_10."""
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name.casefold())]
+
+
 def attachment_header(name):
     # quote() percent-encodes CR/LF, so a hostile filename can't forge headers.
     fallback = "".join(c for c in name if c.isascii() and c.isprintable() and c not in '"\\')
@@ -226,7 +231,7 @@ def listing():
             chain = folder_chain(drive, folder_id)
             if not chain:
                 abort(404)
-            # The configured root is what the "Files" crumb already links to.
+            # The configured root is what the Home crumb already links to.
             if GOOGLE_DRIVE_FOLDER_ID and chain[-1]["id"] == GOOGLE_DRIVE_FOLDER_ID:
                 chain.pop()
             trail = chain[::-1]
@@ -243,7 +248,7 @@ def listing():
                     q=query,
                     pageSize=100,
                     pageToken=page_token,
-                    orderBy="modifiedTime desc",
+                    orderBy="name_natural",
                     fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
                     supportsAllDrives=True,
                     includeItemsFromAllDrives=True,
@@ -261,6 +266,10 @@ def listing():
 
     for file in files:
         file["is_folder"] = file.get("mimeType") == FOLDER_MIME
+
+    # Drive has no "folders first" sort key, so group folders before files here, mirroring
+    # the Drive web UI's ordering of each group by name.
+    files.sort(key=lambda file: (not file["is_folder"], natural_key(file["name"])))
 
     return render_template(
         "files.html", user=session.get("user"), files=files, trail=trail

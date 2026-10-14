@@ -18,7 +18,7 @@
       <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
           <li class="breadcrumb-item {% if not trail %}active{% endif %}">
-            {% if trail %}<a href="{{ url_for('listing') }}">Files</a>{% else %}Files{% endif %}
+            {% if trail %}<a href="{{ url_for('listing') }}">Home</a>{% else %}Home{% endif %}
           </li>
           {% for folder in trail %}
             <li class="breadcrumb-item {{ 'active' if loop.last }}">
@@ -46,9 +46,9 @@
               <tr>
                 <td>
                   {% if file.is_folder %}
-                    📁 <a href="{{ url_for('listing', folder=file.id) }}">{{ file.name }}</a>
+                    <a href="{{ url_for('listing', folder=file.id) }}">{{ file.name }}</a>
                   {% else %}
-                    &nbsp;&nbsp;<a href="{{ url_for('download', file_id=file.id) }}">{{ file.name }}</a>
+                    <a href="{{ url_for('download', file_id=file.id) }}">{{ file.name }}</a>
                   {% endif %}
                 </td>
                 <td class="text-secondary small">{{ file.mimeType }}</td>
