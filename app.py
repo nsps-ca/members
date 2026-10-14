@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import secrets
 from itertools import chain
 from urllib.parse import quote, urlencode
@@ -31,6 +32,11 @@ load_dotenv()
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 CHUNK_SIZE = 4 * 1024 * 1024
+
+FOLDER_MIME = "application/vnd.google-apps.folder"
+
+# Drive ids are opaque; only ever interpolate ones that look like ids.
+DRIVE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
 
 DOWNLOAD_EXPORTS = {
     "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
@@ -92,7 +98,6 @@ def drive_chunks(media_request, chunksize=CHUNK_SIZE, num_retries=3):
 
 SIZE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
-
 def human_size(size, precision=1):
     """Format a byte count for display, e.g. "1536" -> "1.5 KB"."""
     try:
@@ -111,6 +116,33 @@ def human_size(size, precision=1):
 
 
 app.jinja_env.filters["human_size"] = human_size
+
+
+def folder_chain(drive, folder_id):
+    """A folder and its ancestors, nearest first, each as {"id", "name"}.
+
+    Walking stops at GOOGLE_DRIVE_FOLDER_ID when it is configured, otherwise at the top of
+    the drive. Returns an empty list if folder_id is missing or is not a folder.
+    """
+    chain, seen, current = [], set(), folder_id
+    while current and current not in seen:
+        seen.add(current)
+        meta = (
+            drive.files()
+            .get(
+                fileId=current,
+                fields="id, name, mimeType, parents",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        if meta.get("mimeType") != FOLDER_MIME:
+            return []
+        chain.append({"id": meta["id"], "name": meta.get("name") or "Untitled folder"})
+        if current == GOOGLE_DRIVE_FOLDER_ID:
+            break
+        current = next(iter(meta.get("parents") or []), None)
+    return chain
 
 
 def attachment_header(name):
@@ -183,12 +215,27 @@ def callback():
 def listing():
     drive = drive_service()
 
-    query = "trashed = false"
-    if GOOGLE_DRIVE_FOLDER_ID:
-        query = f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and {query}"
+    # No ?folder= means the configured root folder (or the whole drive if unset).
+    folder_id = request.args.get("folder") or GOOGLE_DRIVE_FOLDER_ID
+    if folder_id and not DRIVE_ID_RE.fullmatch(folder_id):
+        abort(404)
 
-    files, page_token = [], None
+    trail = []
     try:
+        if folder_id:
+            chain = folder_chain(drive, folder_id)
+            if not chain:
+                abort(404)
+            # The configured root is what the "Files" crumb already links to.
+            if GOOGLE_DRIVE_FOLDER_ID and chain[-1]["id"] == GOOGLE_DRIVE_FOLDER_ID:
+                chain.pop()
+            trail = chain[::-1]
+
+        query = "trashed = false"
+        if folder_id:
+            query = f"'{folder_id}' in parents and {query}"
+
+        files, page_token = [], None
         while True:
             page = (
                 drive.files()
@@ -208,9 +255,16 @@ def listing():
             if not page_token:
                 break
     except HttpError as e:
+        if e.resp.status == 404:
+            abort(404)
         return f"Google Drive error: {e}", 502
 
-    return render_template("files.html", user=session.get("user"), files=files)
+    for file in files:
+        file["is_folder"] = file.get("mimeType") == FOLDER_MIME
+
+    return render_template(
+        "files.html", user=session.get("user"), files=files, trail=trail
+    )
 
 
 @app.get("/files/<file_id>/download")
@@ -232,8 +286,14 @@ def download(file_id):
         return f"Google Drive error: {e}", 404 if e.resp.status == 404 else 502
 
     # Never serve anything outside the folder we list.
-    if GOOGLE_DRIVE_FOLDER_ID and GOOGLE_DRIVE_FOLDER_ID not in meta.get("parents", []):
-        return "File is not in the configured folder", 403
+    if GOOGLE_DRIVE_FOLDER_ID:
+        parent = next(iter(meta.get("parents") or []), None)
+        try:
+            ancestors = folder_chain(drive, parent) if parent else []
+        except HttpError as e:
+            return f"Google Drive error: {e}", 502
+        if not any(item["id"] == GOOGLE_DRIVE_FOLDER_ID for item in ancestors):
+            return "File is not in the configured folder", 403
 
     name, mime = meta["name"], meta["mimeType"]
     if mime.startswith("application/vnd.google-apps."):

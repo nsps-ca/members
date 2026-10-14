@@ -91,7 +91,19 @@ and `logs/supervisord.log` the supervisor output; both are rotated at 10 MB.
 
 - [app.py](app.py) — routes: `/`, `/login`, `/callback`, `/files`, `/files/<id>/download`, `/logout`
 - [templates/index.html](templates/index.html) — Bootstrap login/profile card
-- [templates/files.html](templates/files.html) — Bootstrap table of Drive files
+- [templates/files.html](templates/files.html) — Bootstrap table of Drive files with a folder breadcrumb
+
+## Browsing folders
+
+`GET /files` lists the configured root folder, or the whole drive when
+`GOOGLE_DRIVE_FOLDER_ID` is unset. Folder rows link to `GET /files?folder=<id>`, which lists
+that folder's children, so the browser walks the tree one level at a time.
+
+A Bootstrap breadcrumb above the table shows the current folder's ancestors, each of them
+linked, so a user can step back out of a nested folder (`folder_chain` walks `parents` up
+from the current folder, stopping at `GOOGLE_DRIVE_FOLDER_ID` when it is set). The `folder`
+parameter is rejected with a 404 unless it looks like a Drive id and resolves to a folder,
+so a file id or a deleted folder can't be used to list something unexpected.
 
 ## Downloading
 
@@ -101,8 +113,9 @@ and `logs/supervisord.log` the supervisor output; both are rotated at 10 MB.
 - Regular files are fetched with `files.get_media`.
 - Google Workspace files (Docs/Sheets/Slides/Drawings) are exported to PDF, XLSX or PNG,
   since they have no bytes of their own.
-- When `GOOGLE_DRIVE_FOLDER_ID` is set, files outside that folder are refused with a 403,
-  so a logged-in user can only reach what the listing shows.
+- When `GOOGLE_DRIVE_FOLDER_ID` is set, files whose ancestor chain never reaches that folder
+  are refused with a 403, so a logged-in user can only reach what the listing shows — including
+  files inside sub-folders of the root.
 
 Downloads are streamed in 4 MB chunks (`CHUNK_SIZE`) rather than buffered, so memory use
 stays flat and multi-GB files work. `MediaIoBaseDownload` fetches each chunk with a Range
