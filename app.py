@@ -55,46 +55,12 @@ SLACK_TEAM = "T0ABMM43WPL"
 CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
 SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI")
-GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
 assert app.secret_key, "FLASK_SECRET_KEY is not defined"
 assert CLIENT_ID, "SLACK_CLIENT_ID is not defined"
 assert CLIENT_SECRET, "SLACK_CLIENT_SECRET is not defined"
 assert SLACK_REDIRECT_URI, "SLACK_REDIRECT_URI is not defined"
-assert GOOGLE_SERVICE_ACCOUNT_FILE, "GOOGLE_SERVICE_ACCOUNT_FILE is not defined"
-
-
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if session.get("user") is None:
-            return redirect("/?m=unauth")
-        return f(*args, **kwargs)
-
-    return decorated_function
-
-
-def drive_service():
-    if not GOOGLE_SERVICE_ACCOUNT_FILE or not os.path.isfile(GOOGLE_SERVICE_ACCOUNT_FILE):
-        abort(500, "GOOGLE_SERVICE_ACCOUNT_FILE is not set or does not exist")
-
-    credentials = service_account.Credentials.from_service_account_file(
-        GOOGLE_SERVICE_ACCOUNT_FILE, scopes=DRIVE_SCOPES
-    )
-    return build("drive", "v3", credentials=credentials, cache_discovery=False)
-
-
-def drive_chunks(media_request, chunksize=CHUNK_SIZE, num_retries=3):
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, media_request, chunksize=chunksize)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk(num_retries=num_retries)
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate()
-
 
 SIZE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
@@ -113,6 +79,34 @@ def human_size(size, precision=1):
                 return f"{int(value)} {unit}"
             return f"{value:.{precision}f} {unit}"
         value /= 1024
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get("user") is None:
+            return redirect("/?m=unauth")
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def drive_service():
+    credentials = service_account.Credentials.from_service_account_file(
+        "service-account.json", scopes=DRIVE_SCOPES
+    )
+    return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+
+def drive_chunks(media_request, chunksize=CHUNK_SIZE, num_retries=3):
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, media_request, chunksize=chunksize)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk(num_retries=num_retries)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate()
 
 
 app.jinja_env.filters["human_size"] = human_size
