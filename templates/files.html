@@ -34,7 +34,7 @@
                 <td class="text-secondary small">{{ file.mimeType }}</td>
                 <td class="text-secondary small">{{ file.modifiedTime }}</td>
                 <td class="text-end text-secondary small">
-                  {% if file.size %}{{ (file.size | int / 1024) | round(1) }} KB{% else %}&mdash;{% endif %}
+                  {% if file.size %}{{ file.size | human_size }}{% else %}&mdash;{% endif %}
                 </td>
               </tr>
             {% else %}

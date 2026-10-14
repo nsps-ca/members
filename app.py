@@ -32,7 +32,6 @@ DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 CHUNK_SIZE = 4 * 1024 * 1024
 
-# Google Workspace files have no bytes of their own, so they must be exported.
 DOWNLOAD_EXPORTS = {
     "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
     "application/vnd.google-apps.spreadsheet": (
@@ -46,13 +45,18 @@ DOWNLOAD_EXPORTS = {
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
 
+SLACK_TEAM = "T0ABMM43WPL"
 CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
 SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-assert CLIENT_ID
-assert CLIENT_SECRET
+
+assert app.secret_key, "FLASK_SECRET_KEY is not defined"
+assert CLIENT_ID, "SLACK_CLIENT_ID is not defined"
+assert CLIENT_SECRET, "SLACK_CLIENT_SECRET is not defined"
+assert SLACK_REDIRECT_URI, "SLACK_REDIRECT_URI is not defined"
+assert GOOGLE_SERVICE_ACCOUNT_FILE, "GOOGLE_SERVICE_ACCOUNT_FILE is not defined"
 
 
 def login_required(f):
@@ -76,12 +80,6 @@ def drive_service():
 
 
 def drive_chunks(media_request, chunksize=CHUNK_SIZE, num_retries=3):
-    """Yield a Drive download chunk by chunk, so multi-GB files never sit in memory.
-
-    MediaIoBaseDownload fetches each chunk with a Range request, then hands us one
-    write per chunk; we drain that buffer before asking for the next one, which also
-    gives the client backpressure.
-    """
     buffer = io.BytesIO()
     downloader = MediaIoBaseDownload(buffer, media_request, chunksize=chunksize)
     done = False
@@ -90,6 +88,29 @@ def drive_chunks(media_request, chunksize=CHUNK_SIZE, num_retries=3):
         yield buffer.getvalue()
         buffer.seek(0)
         buffer.truncate()
+
+
+SIZE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
+
+
+def human_size(size, precision=1):
+    """Format a byte count for display, e.g. "1536" -> "1.5 KB"."""
+    try:
+        value = float(size)
+    except (TypeError, ValueError):
+        return "—"
+    if value < 0:
+        return "—"
+
+    for unit in SIZE_UNITS:
+        if value < 1024 or unit == SIZE_UNITS[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.{precision}f} {unit}"
+        value /= 1024
+
+
+app.jinja_env.filters["human_size"] = human_size
 
 
 def attachment_header(name):
@@ -113,7 +134,7 @@ def login():
         "client_id": CLIENT_ID,
         "redirect_uri": SLACK_REDIRECT_URI,
         "state": state,
-        "team": "T0ABMM43WPL",
+        "team": SLACK_TEAM,
     }
     return redirect(f"{AUTHORIZE_URL}?{urlencode(params)}")
 

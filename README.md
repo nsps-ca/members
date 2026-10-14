@@ -49,6 +49,39 @@ python app.py
 Open <http://localhost:8000> and click **Sign in with Slack**, then **Browse Drive files**.
 Clicking a file name downloads it through the app.
 
+## Run with supervisord (gunicorn)
+
+`python app.py` is the development server. For anything long-lived, [supervisorctl.conf](supervisorctl.conf)
+runs the app under gunicorn and keeps it alive:
+
+```sh
+pip install -r requirements.txt          # includes gunicorn and supervisor
+.venv/bin/supervisord -c supervisorctl.conf
+.venv/bin/supervisorctl -c supervisorctl.conf status
+```
+
+Common controls (all take `-c supervisorctl.conf`):
+
+```sh
+.venv/bin/supervisorctl -c supervisorctl.conf restart members   # reload after a code change
+.venv/bin/supervisorctl -c supervisorctl.conf stop members
+.venv/bin/supervisord -c supervisorctl.conf                      # start (daemonizes)
+.venv/bin/supervisorctl -c supervisorctl.conf shutdown           # stop supervisord itself
+```
+
+Gunicorn listens on `127.0.0.1:8000`, the port used above, and is started from this directory so
+`app.py` picks up `.env` on its own. Change `--bind` to `0.0.0.0:8000` to reach it from another
+host, and raise `--workers`/`--threads` for more concurrency. It runs `gthread` workers because
+those keep sending heartbeats mid-request, so gunicorn's worker timeout cannot kill a long Drive
+download part-way through. `logs/gunicorn.log` holds the gunicorn output (including access logs)
+and `logs/supervisord.log` the supervisor output; both are rotated at 10 MB.
+
+> The `__main__` block's cookie settings (`SESSION_COOKIE_SAMESITE="None"`,
+> `SESSION_COOKIE_SECURE=True`) only apply to `python app.py`. Under gunicorn the defaults are
+> used, which is fine for the `https://` tunnel in `SLACK_REDIRECT_URI`, but if you terminate
+> HTTPS in front of gunicorn on another host, set those in the app config so the session cookie
+> keeps its `Secure` flag.
+
 > `SLACK_REDIRECT_URI` must exactly match the redirect URL registered in the Slack app.
 > Note that `app.py`'s `__main__` block sets `SESSION_COOKIE_SECURE=True`, which drops the
 > session cookie over plain `http://` — remove that line (or serve over HTTPS) if login
